@@ -1,0 +1,59 @@
+version: "3.1"
+
+stories:
+  - story: Salutation et aide
+    steps:
+      - intent: saluer
+      - action: utter_saluer
+
+  - story: Remerciement utilisateur
+    steps:
+      - intent: remercier
+      - action: utter_remercier
+
+  - story: Dire au revoir
+    steps:
+      - intent: au_revoir
+      - action: utter_au_revoir
+
+  - story: Demander des informations sur une maladie
+    steps:
+      - intent: demander_maladie
+      - action: action_repondre_maladie
+
+  - story: Présentation du chatbot
+    steps:
+      - intent: ask_presentation
+      - action: utter_presentation
+
+  - story: Donner les symptômes d'une maladie
+    steps:
+      - intent: donner_symptome
+      - action: utter_donner_symptome
+
+  - story: Demander un médicament
+    steps:
+      - intent: demander_medicament
+      - action: utter_demander_medicament
+
+  - story: Prendre un rendez-vous
+    steps:
+      - intent: prendre_rendez_vous
+      - action: utter_comment_prendre_rdv
+
+
+  - story: Informations sur l'application
+    steps:
+      - intent: info_application
+      - action: utter_info_application
+
+  - story: Fallback
+    steps:
+      - intent: fallback
+      - action: utter_fallback
+
+
+  - story: Expliquer consultation en ligne
+    steps:
+      - intent: demander_consultation_en_ligne
+      - action: utter_demander_consultation_en_ligne

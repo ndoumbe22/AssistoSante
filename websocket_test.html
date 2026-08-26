@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
+    <input type="text" id="messageInput" placeholder="Enter message">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        // Test with consultation ID 7 and user ID 31 (patient)
+        const ws = new WebSocket('ws://localhost:8000/ws/consultation/7/31/');
+        
+        ws.onopen = function(event) {
+            document.getElementById('status').innerHTML = 'Connected to WebSocket';
+            console.log('Connected to WebSocket');
+        };
+        
+        ws.onmessage = function(event) {
+            const message = JSON.parse(event.data);
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML += '<p>' + JSON.stringify(message) + '</p>';
+            console.log('Received message:', message);
+        };
+        
+        ws.onclose = function(event) {
+            document.getElementById('status').innerHTML = 'Disconnected from WebSocket';
+            console.log('Disconnected from WebSocket');
+        };
+        
+        ws.onerror = function(error) {
+            document.getElementById('status').innerHTML = 'WebSocket error: ' + error;
+            console.log('WebSocket error:', error);
+        };
+        
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = {
+                content: input.value
+            };
+            ws.send(JSON.stringify(message));
+            input.value = '';
+        }
+    </script>
+</body>
+</html>

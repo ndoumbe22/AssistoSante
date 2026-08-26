@@ -1,0 +1,57 @@
+stories:
+- story: chemin heureux 1
+  steps:
+  - user: |
+      Bonjour
+    intent: saluer
+  - action: utter_saluer
+  - user: |
+      Je me sens bien
+    intent: humeur_bonne
+  - action: utter_happy
+
+- story: dire au revoir
+  steps:
+  - user: |
+      Au revoir
+    intent: au_revoir
+  - action: utter_au_revoir
+
+- story: chemin triste 1
+  steps:
+  - user: |
+      Bonjour
+    intent: saluer
+  - action: utter_saluer
+  - user: |
+      Je ne me sens pas bien
+    intent: humeur_triste
+  - action: utter_cheer_up
+  - action: utter_did_that_help
+  - user: |
+      Oui
+    intent: affirmation
+  - action: utter_happy
+
+- story: chemin triste 2
+  steps:
+  - user: |
+      Bonjour
+    intent: saluer
+  - action: utter_saluer
+  - user: |
+      Je ne me sens pas bien
+    intent: humeur_triste
+  - action: utter_cheer_up
+  - action: utter_did_that_help
+  - user: |
+      Non
+    intent: negation
+  - action: utter_au_revoir
+
+- story: défi bot
+  steps:
+  - user: |
+      Es-tu un bot ?
+    intent: defis_bot
+  - action: utter_iamabot

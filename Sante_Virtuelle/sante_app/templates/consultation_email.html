@@ -1,0 +1,25 @@
+<h2>Compte-rendu de votre consultation</h2>
+
+<p><strong>Date :</strong> {{ consultation.date }} à {{ consultation.heure }}</p>
+
+<p><strong>Médecin :</strong> Dr. {{ consultation.medecin.user.first_name }} {{ consultation.medecin.user.last_name }}</p>
+
+<p><strong>Notes :</strong><br>{{ consultation.notes }}</p>
+
+<p><strong>Diagnostic :</strong><br>{{ consultation.diagnostic }}</p>
+
+<h3>Traitements</h3>
+<ul>
+{% for t in consultation.traitements %}
+<li>{{ t.medicament_nom }} – {{ t.medicament_dosage }} – {{ t.posologie }}</li>
+{% endfor %}
+</ul>
+
+<h3>Mesures</h3>
+<ul>
+{% for m in consultation.mesures %}
+<li>{{ m.nom_constante }} : {{ m.valeur }} {{ m.unite }}</li>
+{% endfor %}
+</ul>
+
+<p>Merci de nous faire confiance.</p>

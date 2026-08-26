@@ -1,0 +1,133 @@
+version: "3.1"
+
+nlu:
+
+- intent: saluer
+  examples: |
+    - salut
+    - bonjour
+    - coucou
+    - hello
+    - salut, comment ça va ?
+    - bonsoir
+    - hey
+    - salut le bot
+    - yo
+
+- intent: remercier
+  examples: |
+    - merci
+    - merci beaucoup
+    - je te remercie
+    - c'est gentil
+    - merci pour ton aide
+    - merci infiniment
+    - super, merci !
+
+- intent: au_revoir
+  examples: |
+    - au revoir
+    - à bientôt
+    - à plus tard
+    - salut
+    - bonne journée
+    - bye
+    - à la prochaine
+
+- intent: demander_maladie
+  examples: |
+    - parle-moi du [paludisme](maladie)
+    - c’est quoi la [grippe](maladie) ?
+    - que sais-tu sur le [diabète](maladie) ?
+    - donne-moi des infos sur la [tuberculose](maladie)
+    - quelles sont les causes du [COVID](maladie) ?
+    - parle-moi d’une maladie
+    - je veux connaître les symptômes du [paludisme](maladie)
+    - que faire contre la [diarrhée](maladie) ?
+
+- intent: donner_symptome
+  examples: |
+    - j’ai de la fièvre
+    - je tousse beaucoup
+    - j’ai mal à la tête
+    - je suis fatigué
+    - j’ai des frissons
+    - j’ai le nez qui coule
+    - je ressens des douleurs au ventre
+    - j’ai des nausées
+
+- intent: demander_medicament
+  examples: |
+    - quel médicament puis-je prendre ?
+    - que puis-je prendre pour la fièvre ?
+    - que prendre contre la [grippe](maladie) ?
+    - tu connais un médicament contre le [paludisme](maladie) ?
+    - donne-moi un traitement pour la toux
+    - quels sont les médicaments contre la [diarrhée](maladie) ?
+    - tu peux me conseiller un médicament ?
+
+- intent: ask_presentation
+  examples: |
+    - qui es-tu ?
+    - c’est quoi ce chatbot ?
+    - parle-moi de toi
+    - que fais-tu ?
+    - présente-toi
+    - quel est ton rôle ?
+    - tu sers à quoi ?
+
+- intent: prendre_rendez_vous
+  examples: |
+    - je veux prendre un rendez-vous [demain](date)
+    - je souhaite consulter un médecin [aujourd’hui](date)
+    - aide-moi à fixer un rendez-vous [mardi](date) à [10h](heure)
+    - prends un rendez-vous pour moi [lundi](date)
+    - j’aimerais réserver une consultation [lundi](date) à [16h30](heure)
+    - je veux voir un docteur [demain](date)
+    - puis-je avoir un rendez-vous [aujourd’hui](date) à [14h](heure) ?
+    - Comment faire pour prendre un rendez-vous?
+    - Je veux prendre rendez-vous avec un medecin
+
+
+- intent: info_application
+  examples: |
+    - que fait cette application ?
+    - parle-moi de cette application
+    - à quoi sert l’application ?
+    - quelles sont les fonctionnalités ?
+    - que puis-je faire ici ?
+    - explique-moi le but de cette plateforme
+    - c’est quoi cette appli ?
+
+- intent: fallback
+  examples: |
+    - je ne comprends pas
+    - tu peux répéter ?
+    - hein ?
+    - quoi ?
+    - je ne sais pas
+    - je suis perdu
+
+
+- intent: demander_consultation_en_ligne
+  examples: |
+    - comment faire une consultation en ligne ?
+    - comment faire la consultation ?
+    - comment consulter un médecin en ligne ?
+    - comment fonctionne la consultation en ligne ?
+    - que dois-je faire pour consulter un médecin ?
+    - je veux faire une consultation en ligne
+    - comment ça marche la consultation ?
+    - comment faire pour consulter un docteur ?
+  
+
+- intent: comment_rappel_medicament
+  examples: |
+    - comment ajouter un rappel de médicament ?
+    - comment utiliser les rappels de médicaments ?
+    - comment programmer un rappel de médicament ?
+    - comment faire pour recevoir un rappel de médicament ?
+    - comment fonctionne le rappel de médicament ?
+    - comment créer un rappel de prise de médicament ?
+    - je veux recevoir un rappel pour mes médicaments
+    - comment activer les rappels de médicament ?

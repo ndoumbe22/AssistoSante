@@ -1,0 +1,64 @@
+version: "3.1"
+
+rules:
+  - rule: Salutation
+    steps:
+      - intent: saluer
+      - action: utter_saluer
+
+  - rule: Remerciement
+    steps:
+      - intent: remercier
+      - action: utter_remercier
+
+  - rule: Au revoir
+    steps:
+      - intent: au_revoir
+      - action: utter_au_revoir
+
+  - rule: Présentation du chatbot
+    steps:
+      - intent: ask_presentation
+      - action: utter_presentation
+
+  - rule: Donner des informations sur l'application
+    steps:
+      - intent: info_application
+      - action: utter_info_application
+
+  - rule: Demande d'information sur une maladie
+    steps:
+      - intent: demander_maladie
+      - action: action_repondre_maladie
+
+  - rule: Donner des symptômes
+    steps:
+      - intent: donner_symptome
+      - action: utter_donner_symptome
+
+  - rule: Demande de médicament
+    steps:
+      - intent: demander_medicament
+      - action: utter_demander_medicament
+
+  - rule: Expliquer prise de rendez-vous
+    steps:
+      - intent: prendre_rendez_vous
+      - action: utter_comment_prendre_rdv
+
+  - rule: Fallback global
+    steps:
+      - intent: fallback
+      - action: utter_fallback
+
+  - rule: Expliquer comment faire une consultation en ligne
+    steps:
+      - intent: demander_consultation_en_ligne
+      - action: utter_demander_consultation_en_ligne
+
+  - rule: Expliquer comment utiliser le rappel médicament
+    steps:
+      - intent: comment_rappel_medicament
+      - action: utter_comment_rappel_medicament
+    
+   

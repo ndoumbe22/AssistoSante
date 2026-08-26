@@ -1,0 +1,51 @@
+.dashboard-medecin {
+  background-color: #f8f9fa;
+  min-height: 100vh;
+}
+
+.dashboard-medecin .stat-card {
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+}
+
+.dashboard-medecin .stat-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+.dashboard-medecin .stat-card h3 {
+  font-size: 2.5rem;
+  color: #2c3e50;
+}
+
+.dashboard-medecin .action-card {
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.dashboard-medecin .action-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+.dashboard-medecin .action-icon {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto;
+}
+
+.dashboard-medecin .list-group-item {
+  border-left: 4px solid transparent;
+  transition: all 0.2s;
+}
+
+.dashboard-medecin .list-group-item:hover {
+  border-left-color: #0d6efd;
+  background-color: #f8f9fa;
+}
+
+.dashboard-medecin .badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}

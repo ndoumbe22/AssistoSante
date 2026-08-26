@@ -1,0 +1,121 @@
+version: "3.1"
+
+intents:
+  - saluer
+  - remercier
+  - au_revoir
+  - demander_maladie
+  - ask_presentation
+  - prendre_rendez_vous
+  - info_application
+  - fallback
+  - donner_symptome
+  - demander_medicament
+  - comment_rappel_medicament
+  - demander_consultation_en_ligne
+
+entities:
+  - maladie
+  - date
+  - heure
+
+slots:
+  maladie:
+    type: text
+    influence_conversation: true
+    mappings:
+      - type: from_entity
+        entity: maladie
+
+  date:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: from_entity
+        entity: date
+      - type: from_text
+
+  heure:
+    type: text
+    influence_conversation: false
+    mappings:
+      - type: from_entity
+        entity: heure
+      - type: from_text
+
+responses:
+  utter_saluer:
+    - text: "Bonjour, comment puis-je vous aider ?"
+    - text: "Salut 👋, que puis-je faire pour vous aujourd'hui ?"
+
+  utter_remercier:
+    - text: "Avec plaisir, c'est mon rôle 😊"
+    - text: "Je suis là pour vous aider 😊"
+
+  utter_au_revoir:
+    - text: "Au revoir, prenez soin de vous."
+    - text: "Bonne journée et à bientôt !"
+
+  utter_demander_maladie:
+    - text: "Je peux vous donner des infos médicales générales, mais cela ne remplace pas un vrai médecin. De quelle maladie voulez-vous parler ?"
+
+  utter_donner_symptome:
+    - text: "Merci pour vos symptômes. Voulez-vous que je vous propose un rendez-vous avec un médecin ?"
+
+  utter_demander_medicament:
+    - text: "Je peux vous indiquer des médicaments courants, mais je vous conseille de consulter un médecin pour une prescription adaptée."
+    - text: "Le paracétamol peut soulager douleurs et fièvre, mais consultez un médecin avant tout traitement."
+
+  utter_presentation:
+    - text: "Je suis un assistant de santé virtuel, conçu pour répondre à vos questions médicales et vous accompagner dans la gestion de votre santé."
+
+  utter_info_application:
+    - text: |
+        📌 Cette application vous permet de :
+        - Gérer les maladies et leurs symptômes
+        - Enregistrer des rendez-vous médicaux
+        - Aider les utilisateurs avec des informations de santé
+        - Servir de support pour le personnel médical
+
+  utter_fallback:
+    - text: "😅 Désolé, je n'ai pas compris. Pouvez-vous reformuler ?"
+
+  utter_comment_prendre_rdv:
+    - text: |
+        👉 Pour prendre un rendez-vous sur l’application :
+
+         1️⃣ Connectez-vous à votre compte patient  
+        (ou créez un compte si vous n’en avez pas encore)
+
+         2️⃣ Une fois dans votre tableau de bord, cliquez sur **“Prendre rendez-vous”**
+
+         3️⃣ Choisissez un **médecin**
+
+         4️⃣ Sélectionnez un **créneau de disponibilité**
+
+         5️⃣ Validez ✔️
+
+        Votre rendez-vous sera alors enregistré dans votre espace patient.
+
+  utter_demander_consultation_en_ligne:
+    - text: |
+        📹 Pour faire une consultation en ligne :
+
+        1️⃣ Connectez-vous à votre compte  
+        2️⃣ Prenez un rendez-vous  
+        3️⃣ Le médecin doit confirmer  
+        4️⃣ Le jour venu, il démarre la consultation  
+        5️⃣ Vous recevez un lien par email pour rejoindre la réunion  
+
+  utter_comment_rappel_medicament:
+    - text: |
+        💊 Pour programmer un rappel médicament :
+
+        1️⃣ Connectez-vous  
+        2️⃣ Allez dans "Médicament du jour"  
+        3️⃣ Ajoutez un rappel  
+        4️⃣ À l’heure définie, vous recevez un email  
+
+actions:
+  - action_repondre_maladie
+  - action_prendre_rendez_vous

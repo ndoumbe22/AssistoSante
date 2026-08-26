@@ -1,0 +1,6 @@
+.env Sante_Virtuelle/
+.env 
+.venv/ 
+__pycache__/ *.pyc media/ staticfiles/ *.backup node_modules/ 
+.rasa/
+chatbot_rasa/rasa_env/ 

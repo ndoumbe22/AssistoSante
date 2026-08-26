@@ -1,0 +1,985 @@
+from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.decorators import action, api_view, permission_classes
+from django.http import JsonResponse
+from django.db.models import Q
+import json
+import requests
+import time
+from .forms import MessageContactForm
+from django.contrib import messages
+from .serializers import (
+    CliniqueSerializer, DentisteSerializer, HopitalSerializer, PharmacieSerializer, 
+    RendezVousSerializer, TraitementSerializer, ConsultationSerializer, ConsultationMessageSerializer,
+    PatientSerializer, MedecinSerializer, MedicamentSerializer,
+    PathologieSerializer, ConstanteSerializer, MesureSerializer, ArticleSerializer, 
+    StructureDeSanteSerializer, ServiceSerializer, ContactFooterSerializer, 
+    ChatbotConversationSerializer, MedicalDocumentSerializer, ChatbotKnowledgeBaseSerializer, 
+    RendezVousCreateSerializer, DisponibiliteMedecinSerializer, IndisponibiliteMedecinSerializer,
+    RegisterSerializer
+)
+from django.contrib.auth.models import User
+from django.contrib.auth import authenticate, get_user_model
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils.timezone import now
+from django.shortcuts import get_object_or_404
+import os
+from django.conf import settings
+from django.http import HttpResponse
+import logging
+from .notifications import NotificationService
+
+# Add these imports for admin statistics
+from django.db.models import Count
+from datetime import date, timedelta, datetime, time as datetime_time
+from .models import log_action, Patient, Medecin, RendezVous, Consultation, Medicament, Pathologie, Traitement, Constante, Mesure, Article, StructureDeSante, Service, Hopital, Clinique, Dentiste, Pharmacie, ChatbotConversation, ContactFooter, MedicalDocument, ChatbotKnowledgeBase, ConsultationMessage, Teleconsultation, DisponibiliteMedecin, IndisponibiliteMedecin
+
+logger = logging.getLogger(__name__)
+
+# Utility function for robust conflict detection
+def check_appointment_conflict(medecin_user, date_rdv, heure_rdv, duration_minutes, exclude_rdv_id=None):
+    """
+    Check if there's a conflict with existing appointments
+    Returns tuple: (has_conflict, conflicting_appointment)
+    """
+    # Calculate time range for the new appointment
+    new_start = datetime.combine(date_rdv, heure_rdv)
+    new_end = new_start + timedelta(minutes=duration_minutes)
+    
+    # Get existing appointments for this doctor on this date
+    existing_appointments = RendezVous.objects.filter(
+        medecin=medecin_user,
+        date=date_rdv,
+        statut__in=['CONFIRMED', 'PENDING']
+    )
+    
+    # Exclude the current appointment if we're updating
+    if exclude_rdv_id:
+        existing_appointments = existing_appointments.exclude(id=exclude_rdv_id)
+    
+    # Check each existing appointment for time overlap
+    for appointment in existing_appointments:
+        # Get the doctor's availability for this appointment's day to get the correct duration
+        appt_jour_semaine = appointment.date.strftime('%A').lower()
+        jour_mapping = {
+            'monday': 'lundi',
+            'tuesday': 'mardi',
+            'wednesday': 'mercredi',
+            'thursday': 'jeudi',
+            'friday': 'vendredi',
+            'saturday': 'samedi',
+            'sunday': 'dimanche'
+        }
+        appt_jour_fr = jour_mapping.get(appt_jour_semaine, '')
+        
+        try:
+            # Get the doctor's availability for this day to determine appointment duration
+            medecin = Medecin.objects.get(user=medecin_user)
+            appt_disponibilite = DisponibiliteMedecin.objects.get(
+                medecin=medecin, 
+                jour=appt_jour_fr, 
+                actif=True
+            )
+            appt_duree = timedelta(minutes=appt_disponibilite.duree_consultation)
+        except (Medecin.DoesNotExist, DisponibiliteMedecin.DoesNotExist):
+            # Fallback to default 30 minutes if no availability found
+            appt_duree = timedelta(minutes=30)
+        
+        # Calculate appointment time range
+        appt_start = datetime.combine(appointment.date, appointment.heure)
+        appt_end = appt_start + appt_duree
+        
+        # Check for time overlap using strict overlap detection
+        # Two intervals [a,b) and [c,d) overlap if a < d and c < b
+        if new_start < appt_end and appt_start < new_end:
+            return True, appointment
+    
+    return False, None
+
+# --------------------
+# Patients
+# --------------------
+class PatientViewSet(viewsets.ModelViewSet):
+    queryset = Patient.objects.all()
+    serializer_class = PatientSerializer
+
+    def get_queryset(self):
+        return Patient.objects.all()
+
+    def get_permissions(self):
+        # rendre accessible en lecture seule publiquement
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Médecins
+# --------------------
+class MedecinViewSet(viewsets.ModelViewSet):
+    queryset = Medecin.objects.all()
+    serializer_class = MedecinSerializer
+
+    def get_queryset(self):
+        return Medecin.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Rendez-vous
+# --------------------
+class RendezVousViewSet(viewsets.ModelViewSet):
+    queryset = RendezVous.objects.all()
+    serializer_class = RendezVousSerializer
+
+    def get_queryset(self):
+        return RendezVous.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return RendezVousCreateSerializer
+        return RendezVousSerializer
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def creneaux_disponibles(self, request):
+        """
+        Get available time slots for a doctor on a specific date
+        Query parameters: medecin_id, date
+        """
+        from .models import DisponibiliteMedecin, IndisponibiliteMedecin, RendezVous
+        from django.utils import timezone
+        import datetime
+        
+        medecin_id = request.query_params.get('medecin_id')
+        date_str = request.query_params.get('date')
+        
+        if not medecin_id or not date_str:
+            return Response({'error': 'medecin_id and date are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get the doctor
+            medecin = Medecin.objects.get(id=medecin_id)
+            date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+        except Medecin.DoesNotExist:
+            return Response({'error': 'Médecin non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            return Response({'error': 'Format de date invalide'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if the date is in the past
+        if date_obj < timezone.now().date():
+            return Response({'error': 'Impossible de réserver dans le passé'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check for doctor's unavailability
+        indisponible = IndisponibiliteMedecin.objects.filter(
+            medecin=medecin,
+            date_debut__lte=date_obj,
+            date_fin__gte=date_obj
+        ).exists()
+        
+        if indisponible:
+            return Response({'creneaux': [], 'message': 'Le médecin est indisponible à cette date'})
+        
+        # Get doctor's availability for the day
+        jour_semaine = date_obj.strftime('%A').lower()
+        jour_mapping = {
+            'monday': 'lundi',
+            'tuesday': 'mardi',
+            'wednesday': 'mercredi',
+            'thursday': 'jeudi',
+            'friday': 'vendredi',
+            'saturday': 'samedi',
+            'sunday': 'dimanche'
+        }
+        jour_fr = jour_mapping.get(jour_semaine, '')
+        
+        try:
+            disponibilite = DisponibiliteMedecin.objects.get(medecin=medecin, jour=jour_fr, actif=True)
+        except DisponibiliteMedecin.DoesNotExist:
+            return Response({'creneaux': [], 'message': f'Le médecin n\'est pas disponible le {jour_fr}'})
+        
+        # Generate available time slots with detailed information
+        creneaux_details = []
+        heure_courante = disponibilite.heure_debut
+        duree_consultation = datetime.timedelta(minutes=disponibilite.duree_consultation)
+        
+        while heure_courante < disponibilite.heure_fin:
+            # Check if this time slot is during lunch break
+            if disponibilite.pause_dejeuner_debut and disponibilite.pause_dejeuner_fin:
+                if disponibilite.pause_dejeuner_debut <= heure_courante < disponibilite.pause_dejeuner_fin:
+                    heure_courante = (datetime.datetime.combine(date_obj, heure_courante) + duree_consultation).time()
+                    continue
+            
+            # Use the robust conflict detection function
+            conflit, _ = check_appointment_conflict(
+                medecin.user,
+                date_obj,
+                heure_courante,
+                disponibilite.duree_consultation
+            )
+            
+            # Check if the slot is at least 2 hours in the future
+            slot_datetime = datetime.datetime.combine(date_obj, heure_courante)
+            is_future = slot_datetime >= timezone.now() + datetime.timedelta(hours=2)
+            
+            # Also check if slot is today but time has passed
+            is_today = date_obj == timezone.now().date()
+            if is_today and heure_courante <= timezone.now().time():
+                is_future = False
+            
+            if not conflit and is_future:
+                creneaux_details.append({
+                    "heure": heure_courante.strftime('%H:%M'),
+                    "disponible": True,
+                    "motif_indisponibilite": None
+                })
+            elif conflit:
+                creneaux_details.append({
+                    "heure": heure_courante.strftime('%H:%M'),
+                    "disponible": False,
+                    "motif_indisponibilite": "Déjà réservé"
+                })
+            elif not is_future:
+                creneaux_details.append({
+                    "heure": heure_courante.strftime('%H:%M'),
+                    "disponible": False,
+                    "motif_indisponibilite": "Dans le passé"
+                })
+            
+            heure_courante = (datetime.datetime.combine(date_obj, heure_courante) + duree_consultation).time()
+        
+        return Response({'creneaux': creneaux_details})
+    
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def prochains_creneaux(self, request, pk=None):
+        """
+        Get next available slots for a doctor
+        Query parameters: limit (default 5)
+        """
+        from .models import DisponibiliteMedecin, IndisponibiliteMedecin, RendezVous
+        from django.utils import timezone
+        import datetime
+        
+        limit = int(request.query_params.get('limit', 5))
+        
+        try:
+            # Get the doctor
+            medecin = Medecin.objects.get(id=pk)
+        except Medecin.DoesNotExist:
+            return Response({'error': 'Médecin non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get all doctor's availabilities
+        disponibilites = DisponibiliteMedecin.objects.filter(medecin=medecin, actif=True)
+        
+        creneaux_trouves = []
+        current_date = timezone.now().date()
+        
+        # Try to find next available slots
+        for i in range(30):  # Check next 30 days
+            check_date = current_date + datetime.timedelta(days=i)
+            jour_semaine = check_date.strftime('%A').lower()
+            jour_mapping = {
+                'monday': 'lundi',
+                'tuesday': 'mardi',
+                'wednesday': 'mercredi',
+                'thursday': 'jeudi',
+                'friday': 'vendredi',
+                'saturday': 'samedi',
+                'sunday': 'dimanche'
+            }
+            jour_fr = jour_mapping.get(jour_semaine, '')
+            
+            # Check if doctor is unavailable this day
+            indisponible = IndisponibiliteMedecin.objects.filter(
+                medecin=medecin,
+                date_debut__lte=check_date,
+                date_fin__gte=check_date
+            ).exists()
+            
+            if indisponible:
+                continue
+            
+            # Get doctor's availability for this day
+            try:
+                disponibilite = disponibilites.get(jour=jour_fr)
+            except DisponibiliteMedecin.DoesNotExist:
+                continue
+            
+            # Generate time slots for this day
+            heure_courante = disponibilite.heure_debut
+            duree_consultation = datetime.timedelta(minutes=disponibilite.duree_consultation)
+            
+            while heure_courante < disponibilite.heure_fin and len(creneaux_trouves) < limit:
+                # Check if this time slot is during lunch break
+                if disponibilite.pause_dejeuner_debut and disponibilite.pause_dejeuner_fin:
+                    if disponibilite.pause_dejeuner_debut <= heure_courante < disponibilite.pause_dejeuner_fin:
+                        heure_courante = (datetime.datetime.combine(check_date, heure_courante) + duree_consultation).time()
+                        continue
+                
+                # Use the robust conflict detection function
+                conflit, _ = check_appointment_conflict(
+                    medecin.user,
+                    check_date,
+                    heure_courante,
+                    disponibilite.duree_consultation
+                )
+                
+                # Check if the slot is at least 2 hours in the future
+                slot_datetime = datetime.datetime.combine(check_date, heure_courante)
+                is_future = slot_datetime >= timezone.now() + datetime.timedelta(hours=2)
+                
+                # Also check if slot is today but time has passed
+                is_today = check_date == timezone.now().date()
+                if is_today and heure_courante <= timezone.now().time():
+                    is_future = False
+                
+                if not conflit and is_future:
+                    creneaux_trouves.append({
+                        "date": check_date.strftime('%Y-%m-%d'),
+                        "heure": heure_courante.strftime('%H:%M'),
+                        "datetime": slot_datetime.isoformat()
+                    })
+                
+                heure_courante = (datetime.datetime.combine(check_date, heure_courante) + duree_consultation).time()
+                
+                if len(creneaux_trouves) >= limit:
+                    break
+            
+            if len(creneaux_trouves) >= limit:
+                break
+        
+        return Response({'creneaux': creneaux_trouves})
+    
+    def perform_create(self, serializer):
+        # Auto-assign patient from authenticated user if not provided
+        if not serializer.validated_data.get('patient'):
+            serializer.save(patient=self.request.user)
+        else:
+            serializer.save()
+        
+        # Send notification to the doctor
+        from .notifications import NotificationService
+        try:
+            # Get the appointment instance after saving
+            appointment = serializer.instance
+            NotificationService.send_appointment_request_notification(appointment)
+        except Exception as e:
+            print(f"Error sending appointment notification: {e}")
+
+# --------------------
+# Consultations
+# --------------------
+class ConsultationViewSet(viewsets.ModelViewSet):
+    queryset = Consultation.objects.all()
+    serializer_class = ConsultationSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated:
+            if user.role == 'medecin':
+                # Doctors can see their consultations
+                return Consultation.objects.filter(medecin=user.medecin)
+            elif user.role == 'patient':
+                # Patients can see their consultations
+                return Consultation.objects.filter(patient=user.patient_profile)
+        return Consultation.objects.none()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [IsAuthenticated()]
+        return [IsAuthenticated()]
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def start(self, request, pk=None):
+        """Start an online consultation"""
+        consultation = self.get_object()
+        user = request.user
+        
+        # Check if user is authorized (patient or doctor of this consultation)
+        if not (user == consultation.patient.user or user == consultation.medecin.user):
+            return Response(
+                {'error': 'Vous n\'êtes pas autorisé à démarrer cette consultation'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Update consultation status
+        consultation.statut = 'en_cours'
+        consultation.save()
+        
+        return Response({
+            'message': 'Consultation démarrée avec succès',
+            'consultation': ConsultationSerializer(consultation).data
+        })
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def end(self, request, pk=None):
+        """End an online consultation"""
+        consultation = self.get_object()
+        user = request.user
+        
+        # Check if user is authorized (patient or doctor of this consultation)
+        if not (user == consultation.patient.user or user == consultation.medecin.user):
+            return Response(
+                {'error': 'Vous n\'êtes pas autorisé à terminer cette consultation'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Update consultation status
+        consultation.statut = 'terminee'
+        consultation.save()
+        
+        return Response({
+            'message': 'Consultation terminée avec succès',
+            'consultation': ConsultationSerializer(consultation).data
+        })
+
+
+# --------------------
+# Consultation Messages
+# --------------------
+class ConsultationMessageViewSet(viewsets.ModelViewSet):
+    queryset = ConsultationMessage.objects.all()
+    serializer_class = ConsultationMessageSerializer
+
+# -------------------- Teleconsultation --------------------
+from .models import Teleconsultation
+from .serializers import TeleconsultationSerializer
+import uuid
+import os
+from django.conf import settings
+
+# Try to import Agora token builder
+try:
+    from agora_token_builder import RtcTokenBuilder
+    AGORA_AVAILABLE = True
+except ImportError:
+    RtcTokenBuilder = None
+    AGORA_AVAILABLE = False
+
+class TeleconsultationViewSet(viewsets.ModelViewSet):
+    queryset = Teleconsultation.objects.all()
+    serializer_class = TeleconsultationSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated:
+            if user.role == 'medecin':
+                # Doctors can see their teleconsultations
+                return Teleconsultation.objects.filter(consultation__medecin=user.medecin)
+            elif user.role == 'patient':
+                # Patients can see their teleconsultations
+                return Teleconsultation.objects.filter(consultation__patient=user.patient_profile)
+        return Teleconsultation.objects.none()
+    
+    def create(self, request, *args, **kwargs):
+        consultation_id = request.data.get('consultation')
+        if not consultation_id:
+            return Response({'error': 'Consultation ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if teleconsultation already exists for this consultation
+        try:
+            teleconsultation = Teleconsultation.objects.get(consultation_id=consultation_id)
+            serializer = self.get_serializer(teleconsultation)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Teleconsultation.DoesNotExist:
+            pass
+        
+        # Create new teleconsultation with unique channel name
+        channel_name = f"teleconsultation_{consultation_id}_{uuid.uuid4().hex[:8]}"
+        teleconsultation = Teleconsultation.objects.create(
+            consultation_id=consultation_id,
+            channel_name=channel_name
+        )
+        
+        serializer = self.get_serializer(teleconsultation)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def generate_token(self, request, pk=None):
+        """Generate Agora token for a teleconsultation"""
+        # Check if Agora is available
+        if not AGORA_AVAILABLE:
+            return Response(
+                {'error': 'Agora token builder not available. Teleconsultation feature is not properly configured.'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        teleconsultation = self.get_object()
+        
+        # Check if user is authorized (patient or doctor of this consultation)
+        user = request.user
+        consultation = teleconsultation.consultation
+        if not (user == consultation.patient.user or user == consultation.medecin.user):
+            return Response(
+                {'error': 'Vous n\'êtes pas autorisé à accéder à cette téléconsultation'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get Agora credentials from environment variables
+        app_id = os.environ.get('AGORA_APP_ID')
+        app_certificate = os.environ.get('AGORA_APP_CERTIFICATE')
+        
+        # Check if App ID is provided
+        if not app_id or app_id == '':
+            return Response(
+                {'error': 'Agora App ID not configured. Please set AGORA_APP_ID environment variable.'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Check if App Certificate is provided
+        if not app_certificate or app_certificate == '' or app_certificate == 'your_agora_app_certificate_here':
+            return Response(
+                {'error': 'Agora App Certificate not configured. Please set AGORA_APP_CERTIFICATE environment variable for secure authentication.'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Generate secure token with certificate
+        channel_name = teleconsultation.channel_name
+        uid = 0  # Using 0 as uid for simplicity
+        role = 1  # Publisher role
+        expire_time_in_seconds = 3600  # 1 hour
+        current_timestamp = int(time.time())
+        privilege_expired_ts = current_timestamp + expire_time_in_seconds
+        
+        try:
+            token = RtcTokenBuilder.buildTokenWithUid(
+                app_id, app_certificate, channel_name, uid, role, privilege_expired_ts
+            )
+            
+            return Response({
+                'token': token,
+                'channel_name': channel_name,
+                'uid': uid
+            })
+        except Exception as e:
+            return Response(
+                {'error': f'Error generating token: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def end(self, request, pk=None):
+        """End a teleconsultation"""
+        teleconsultation = self.get_object()
+        user = request.user
+        consultation = teleconsultation.consultation
+        
+        # Check if user is authorized (patient or doctor of this consultation)
+        if not (user == consultation.patient.user or user == consultation.medecin.user):
+            return Response(
+                {'error': 'Vous n\'êtes pas autorisé à terminer cette téléconsultation'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Update teleconsultation end time
+        teleconsultation.ended_at = timezone.now()
+        teleconsultation.save()
+        
+        # Also end the consultation
+        consultation.statut = 'terminee'
+        consultation.save()
+        
+        return Response({
+            'message': 'Téléconsultation terminée avec succès',
+            'teleconsultation': TeleconsultationSerializer(teleconsultation).data
+        })
+
+
+# -------------------- Disponibilité Médecin --------------------
+class DisponibiliteMedecinViewSet(viewsets.ModelViewSet):
+    queryset = DisponibiliteMedecin.objects.all()
+    serializer_class = DisponibiliteMedecinSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated and user.role == 'medecin':
+            try:
+                medecin = Medecin.objects.get(user=user)
+                return DisponibiliteMedecin.objects.filter(medecin=medecin)
+            except Medecin.DoesNotExist:
+                return DisponibiliteMedecin.objects.none()
+        return DisponibiliteMedecin.objects.none()
+    
+    def perform_create(self, serializer):
+        # Auto-assign medecin from authenticated user
+        user = self.request.user
+        try:
+            medecin = Medecin.objects.get(user=user)
+            serializer.save(medecin=medecin)
+        except Medecin.DoesNotExist:
+            raise serializers.ValidationError("Profil médecin non trouvé")
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def mes_disponibilites(self, request):
+        """
+        Get all disponibilities for the current doctor
+        """
+        user = self.request.user
+        try:
+            medecin = Medecin.objects.get(user=user)
+            disponibilites = DisponibiliteMedecin.objects.filter(medecin=medecin)
+            serializer = self.get_serializer(disponibilites, many=True)
+            return Response(serializer.data)
+        except Medecin.DoesNotExist:
+            return Response({'error': 'Profil médecin non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def ajouter_disponibilite(self, request):
+        """
+        Add a new disponibility for the current doctor
+        """
+        return self.create(request)
+
+
+class IndisponibiliteMedecinViewSet(viewsets.ModelViewSet):
+    queryset = IndisponibiliteMedecin.objects.all()
+    serializer_class = IndisponibiliteMedecinSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated and user.role == 'medecin':
+            try:
+                medecin = Medecin.objects.get(user=user)
+                return IndisponibiliteMedecin.objects.filter(medecin=medecin)
+            except Medecin.DoesNotExist:
+                return IndisponibiliteMedecin.objects.none()
+        return IndisponibiliteMedecin.objects.none()
+    
+    def perform_create(self, serializer):
+        # Auto-assign medecin from authenticated user
+        user = self.request.user
+        try:
+            medecin = Medecin.objects.get(user=user)
+            serializer.save(medecin=medecin)
+        except Medecin.DoesNotExist:
+            raise serializers.ValidationError("Profil médecin non trouvé")
+    
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def mes_indisponibilites(self, request):
+        """
+        Get all unavailabilities for the current doctor
+        """
+        user = self.request.user
+        try:
+            medecin = Medecin.objects.get(user=user)
+            indisponibilites = IndisponibiliteMedecin.objects.filter(medecin=medecin)
+            serializer = self.get_serializer(indisponibilites, many=True)
+            return Response(serializer.data)
+        except Medecin.DoesNotExist:
+            return Response({'error': 'Profil médecin non trouvé'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def ajouter_indisponibilite(self, request):
+        """
+        Add a new unavailability for the current doctor
+        """
+        return self.create(request)
+
+# --------------------
+# Médicaments
+# --------------------
+class MedicamentViewSet(viewsets.ModelViewSet):
+    queryset = Medicament.objects.all()
+    serializer_class = MedicamentSerializer
+
+    def get_queryset(self):
+        return Medicament.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Pathologies
+# --------------------
+class PathologieViewSet(viewsets.ModelViewSet):
+    queryset = Pathologie.objects.all()
+    serializer_class = PathologieSerializer
+
+    def get_queryset(self):
+        return Pathologie.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Traitements
+# --------------------
+class TraitementViewSet(viewsets.ModelViewSet):
+    queryset = Traitement.objects.all()
+    serializer_class = TraitementSerializer
+
+    def get_queryset(self):
+        return Traitement.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Constantes
+# --------------------
+class ConstanteViewSet(viewsets.ModelViewSet):
+    queryset = Constante.objects.all()
+    serializer_class = ConstanteSerializer
+
+    def get_queryset(self):
+        return Constante.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Mesures
+# --------------------
+class MesureViewSet(viewsets.ModelViewSet):
+    queryset = Mesure.objects.all()
+    serializer_class = MesureSerializer
+
+    def get_queryset(self):
+        return Mesure.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Articles
+# --------------------
+class ArticleViewSet(viewsets.ModelViewSet):
+    queryset = Article.objects.all()
+    serializer_class = ArticleSerializer
+
+    def get_queryset(self):
+        return Article.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Structures de santé
+# --------------------
+class StructureDeSanteViewSet(viewsets.ModelViewSet):
+    queryset = StructureDeSante.objects.all()
+    serializer_class = StructureDeSanteSerializer
+
+    def get_queryset(self):
+        return StructureDeSante.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+# --------------------
+# Services
+# --------------------
+class ServiceViewSet(viewsets.ModelViewSet):
+    queryset = Service.objects.all()
+    serializer_class = ServiceSerializer
+
+    def get_queryset(self):
+        return Service.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+    
+class CliniqueViewSet(viewsets.ModelViewSet):
+    queryset = Clinique.objects.all()
+    serializer_class = CliniqueSerializer
+    permission_classes = [AllowAny]
+
+
+class DentisteViewSet(viewsets.ModelViewSet):
+    queryset = Dentiste.objects.all()
+    serializer_class = DentisteSerializer
+    permission_classes = [AllowAny]
+
+
+class HopitalViewSet(viewsets.ModelViewSet):
+    queryset = Hopital.objects.all()
+    serializer_class = HopitalSerializer
+    permission_classes = [AllowAny]
+
+
+class PharmacieViewSet(viewsets.ModelViewSet):
+    queryset = Pharmacie.objects.all()
+    serializer_class = PharmacieSerializer
+    permission_classes = [AllowAny]
+
+
+class ContactFooterViewSet(viewsets.ModelViewSet):
+    queryset = ContactFooter.objects.all()
+    serializer_class = ContactFooterSerializer
+    permission_classes = [AllowAny]
+
+
+# -------------------- Medical Documents --------------------
+class MedicalDocumentViewSet(viewsets.ModelViewSet):
+    queryset = MedicalDocument.objects.all()
+    serializer_class = MedicalDocumentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == 'medecin':
+            # Doctors can see documents for their appointments
+            return MedicalDocument.objects.filter(
+                rendez_vous__medecin=user
+            )
+        else:
+            # Patients can see documents they uploaded or that were shared with them
+            return MedicalDocument.objects.filter(
+                Q(uploaded_by=user) | Q(rendez_vous__patient=user)
+            )
+
+    def perform_create(self, serializer):
+        # Save the appointment
+        appointment = serializer.save()
+        
+        # Send notification to the doctor
+        from .notifications import NotificationService
+        try:
+            # Additional validation to ensure we're only sending to one specific doctor
+            if hasattr(appointment, 'medecin') and appointment.medecin and hasattr(appointment.medecin, 'user'):
+                NotificationService.send_appointment_request_notification(appointment)
+            else:
+                print(f"❌ Erreur: Aucun médecin associé au rendez-vous {getattr(appointment, 'numero', 'N/A')}")
+        except Exception as e:
+            print(f"Error sending appointment notification: {e}")
+
+# --------------------
+# Chatbot (Rasa)
+# --------------------
+class ChatbotAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message = request.data.get("message", "")
+        if not message:
+            return Response({"error": "Aucun message fourni"}, status=400)
+
+        # Get or create patient profile
+        try:
+            patient = request.user.patient_profile
+        except Patient.DoesNotExist:
+            return Response({"error": "Profil patient non trouvé"}, status=400)
+
+        rasa_url = "http://localhost:5005/webhooks/rest/webhook"
+        payload = {
+            "sender": str(request.user.id),
+            "message": message
+        }
+
+        try:
+            response = requests.post(rasa_url, json=payload)
+            response_data = response.json()
+            
+            # Extract bot response
+            bot_response = ""
+            if response_data and isinstance(response_data, list) and len(response_data) > 0:
+                bot_response = response_data[0].get("text", "Désolé, je n'ai pas compris.")
+            else:
+                bot_response = "Désolé, je n'ai pas compris."
+            
+            # Save conversation to database
+            conversation = ChatbotConversation.objects.create(
+                patient=patient,
+                message_user=message,
+                message_bot=bot_response
+            )
+            
+            return Response({"responses": response_data})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+            
+    def get(self, request):
+        """Get chatbot conversation history for the authenticated patient"""
+        try:
+            patient = request.user.patient_profile
+            conversations = ChatbotConversation.objects.filter(patient=patient).order_by('timestamp')
+            serializer = ChatbotConversationSerializer(conversations, many=True)
+            return Response(serializer.data)
+        except Patient.DoesNotExist:
+            return Response({"error": "Profil patient non trouvé"}, status=400)
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+
+
+User = get_user_model()
+
+# Inscription
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        data = request.data.copy()
+
+        # Empêcher l'inscription en tant qu'admin via frontend
+        if data.get("role") == "admin":
+            return Response(
+                {"error": "Vous ne pouvez pas vous inscrire en tant qu'administrateur."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Par défaut "patient" si non spécifié
+        if not data.get("role"):
+            data["role"] = "patient"
+
+        serializer = RegisterSerializer(data=data)
+        if serializer.is_valid():
+            try:
+                user = serializer.save()  # 🔹 Profil Patient/Medecin créé automatiquement par signals
+                
+                # Send welcome email
+                
+                return Response({
+                    'message': 'Utilisateur enregistré avec succès',
+                    'user': {
+                        'id': user.id,
+                        'username': user.username,
+                        'email': user.email,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'role': user.role
+                    }
+                }, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                logger.error(f"Erreur lors de la création de l'utilisateur: {str(e)}")
+                return Response(
+                    {'error': 'Erreur lors de la création de l\'utilisateur'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+
+# --------------------
+# Connexion
+# --------------------
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        try:
+            username = request.data.get('username')
