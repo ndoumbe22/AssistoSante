@@ -16,3 +16,4 @@ websockets==16.1.1
 pytz==2026.3.post1
 requests==2.34.2
 daphne==4.2.3
+whitenoise==6.12.0
