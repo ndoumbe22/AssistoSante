@@ -266,6 +266,8 @@ EMAIL_HOST_USER = "apikey"  # mot exact
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = "ndoumbistandeyendoumbe@gmail.com"
 
+CSRF_TRUSTED_ORIGINS = ['https://assistosante.onrender.com', 'https://*.onrender.com']
 
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
