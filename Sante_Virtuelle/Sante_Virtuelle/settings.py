@@ -181,9 +181,7 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 STATIC_URL = '/static/'
 
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'sante_app', 'static'),
-]
+STATICFILES_DIRS = []
 
 # Serve React frontend as static files
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
